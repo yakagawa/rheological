@@ -431,24 +431,24 @@ function drawPlotAndModel() {
   drawLine(ROD_COLOR, xNode, yTop, xNode, yBot, 3);
   drawLine(ROD_COLOR, xEps, yTop, xEps, yBot, 3);
 
-  // top branch: friction element (yield value g), drawn as in the source:
+  // top branch: hardening spring (stiffness C): elongation = p
+  drawSpring(xNode, yTop, xEps, yTop, 9, 8, GRAY, 2);
+
+  // bottom branch: friction element (yield value g), drawn as in the source:
   // sliding triangle whose apex is displaced from the node by the slip p,
   // with a dashed line marking the accumulated slip
   const triWPx = TRI_EPS * pxPerEps;
   let xTriApex = xNode + model.p * pxPerEps;
   xTriApex = clamp(xTriApex, xWall + 4, xEps - triWPx - 8);
-  drawSliderTriangle(xTriApex, yTop, triWPx, 24, 'rgb(235,235,245)');
+  drawSliderTriangle(xTriApex, yBot, triWPx, 24, 'rgb(235,235,245)');
 
   if (Math.abs(xTriApex - xNode) > 1e-9) {
     const xL = Math.min(xNode, xTriApex);
     const xR = Math.max(xNode, xTriApex);
-    drawDashedLine('rgb(110,120,155)', xL, yTop, xR, yTop, 2, 6, 4);
+    drawDashedLine('rgb(110,120,155)', xL, yBot, xR, yBot, 2, 6, 4);
   }
 
-  drawLine(ROD_COLOR, xTriApex + triWPx + 4, yTop, xEps, yTop, 3);
-
-  // bottom branch: hardening spring (stiffness C): elongation = p
-  drawSpring(xNode, yBot, xEps, yBot, 9, 8, GRAY, 2);
+  drawLine(ROD_COLOR, xTriApex + triWPx + 4, yBot, xEps, yBot, 3);
 
   // handle
   drawCircle(ACCENT, xEps, yCenter, 9, true);

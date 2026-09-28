@@ -46,6 +46,8 @@ const GRAY = 'rgb(140,150,165)';
 const AXIS = 'rgb(190,195,205)';
 const FRAME = 'rgb(210,215,225)';
 const ROD_COLOR = 'rgb(60,70,90)';
+const YIELD_COLOR = 'rgb(255,0,0)';
+const YIELD0_COLOR = 'rgb(225,170,170)';
 
 const PLOT = { left: 0, top: 0, width: WIDTH, height: HEIGHT, right: WIDTH, bottom: HEIGHT };
 
@@ -405,9 +407,12 @@ function drawPlotAndModel() {
   const xAnchor = xFromEps(epsAnchor0);
   const triWPx = TRI_EPS * pxPerEps;
 
+  // NOTE: the "Top"/"Bot" suffixes below denote branch 1 (g--E1) and
+  // branch 2 (E2). The two y-values are swapped so that the plain spring
+  // (branch 2) is drawn above and the slider branch below.
   const epsAnchorTop = epsAnchor0 + model.epsP;
   const xAnchorTop = xFromEps(epsAnchorTop);
-  const yTop = yCenter - gapV;
+  const yTop = yCenter + gapV;
   drawSliderTriangle(xAnchorTop, yTop, triWPx, 24, 'rgb(235,235,245)');
   const xCoilLTop = xAnchorTop + triWPx + 4;
 
@@ -421,7 +426,7 @@ function drawPlotAndModel() {
   const coil1LenEps = Math.max(0.10, L0_VIS_EPS + epsE1);
   const coil1PxNominal = coil1LenEps * pxPerEps;
 
-  const yBot = yCenter + gapV;
+  const yBot = yCenter - gapV;
   const xCoilLBot = xAnchor + 12;
   drawLine(ROD_COLOR, xAnchor, yBot, xCoilLBot, yBot, 5);
 
@@ -458,18 +463,21 @@ function drawPlotAndModel() {
   drawCircle('rgb(40,50,70)', xEps, yCenter, 10, false, 2);
 
   const epsNow = epsFromX(xr);
+
+  // reference threshold at ε=0 (σ1 = ±g, i.e. σ2 = 0)
+  const yPlus0 = toXY(eMin, model.g)[1];
+  const yMinus0 = toXY(eMin, -model.g)[1];
+  drawDashedLine(YIELD0_COLOR, PLOT.left, yPlus0, PLOT.right, yPlus0, 1.5, 6, 5);
+  drawDashedLine(YIELD0_COLOR, PLOT.left, yMinus0, PLOT.right, yMinus0, 1.5, 6, 5);
+
+  // current threshold: σ = ±g + E2 ε  (translates with the parallel spring)
   const sigmaThreshPlus = model.g + model.E2 * epsNow;
   const sigmaThreshMinus = -model.g + model.E2 * epsNow;
 
   const yPlus = toXY(eMin, sigmaThreshPlus)[1];
   const yMinus = toXY(eMin, sigmaThreshMinus)[1];
-  drawLine('rgb(255,0,0)', PLOT.left, yPlus, PLOT.right, yPlus, 2);
-  drawLine('rgb(255,0,0)', PLOT.left, yMinus, PLOT.right, yMinus, 2);
-
-  const yGPlus = toXY(eMin, model.g)[1];
-  const yGMinus = toXY(eMin, -model.g)[1];
-  drawDashedLine('rgb(200,0,0)', PLOT.left, yGPlus, PLOT.right, yGPlus, 2, 8, 5);
-  drawDashedLine('rgb(200,0,0)', PLOT.left, yGMinus, PLOT.right, yGMinus, 2, 8, 5);
+  drawLine(YIELD_COLOR, PLOT.left, yPlus, PLOT.right, yPlus, 2);
+  drawLine(YIELD_COLOR, PLOT.left, yMinus, PLOT.right, yMinus, 2);
 }
 
 function drawInfo() {
