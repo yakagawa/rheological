@@ -465,6 +465,11 @@ function drawPlotAndModel() {
   const yMinus = toXY(eMin, sigmaThreshMinus)[1];
   drawLine('rgb(255,0,0)', PLOT.left, yPlus, PLOT.right, yPlus, 2);
   drawLine('rgb(255,0,0)', PLOT.left, yMinus, PLOT.right, yMinus, 2);
+
+  const yGPlus = toXY(eMin, model.g)[1];
+  const yGMinus = toXY(eMin, -model.g)[1];
+  drawDashedLine('rgb(200,0,0)', PLOT.left, yGPlus, PLOT.right, yGPlus, 2, 8, 5);
+  drawDashedLine('rgb(200,0,0)', PLOT.left, yGMinus, PLOT.right, yGMinus, 2, 8, 5);
 }
 
 function drawInfo() {
