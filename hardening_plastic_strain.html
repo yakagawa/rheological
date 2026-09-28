@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Kinematic Hardening σ–ε</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #fcfcff;
+      overflow: hidden;
+      touch-action: none;
+      font-family: Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+      width: min(100vw, 100vh);
+      height: min(100vw, 100vh);
+      max-width: 1200px;
+      max-height: 1200px;
+      margin: 0 auto;
+      background: #fff;
+      outline: none;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas" width="600" height="600" tabindex="0"></canvas>
+
+<script>
+'use strict';
+
+// ---------------------------
+// Resolution / parameters
+// ---------------------------
+const WIDTH = 600;
+const HEIGHT = 600;
+
+const BG = 'rgb(252,252,255)';
+const FG = 'rgb(0,0,0)';
+const ACCENT = 'rgb(40,120,230)';
+const GRAY = 'rgb(140,150,165)';
+const AXIS = 'rgb(190,195,205)';
+const FRAME = 'rgb(210,215,225)';
+const ROD_COLOR = 'rgb(60,70,90)';
+const YIELD_COLOR = 'rgb(255,0,0)';
+const YIELD0_COLOR = 'rgb(225,170,170)';
+
+const PLOT = { left: 0, top: 0, width: WIDTH, height: HEIGHT, right: WIDTH, bottom: HEIGHT };
+
+const E_RANGE = [-5, 5];
+const S_RANGE = [-40.0, 40.0];
+
+// series geometry (in eps units): wall + elastic rest + parallel rest = 0
+const EPS_WALL = -4.5;
+const L0_ELASTIC = 2.25;
+const L0_PARALLEL = 2.25;
+const TRI_EPS = 0.12;
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.focus();
+
+function clamp(x, a, b) {
+  return Math.max(a, Math.min(b, x));
+}
+
+function drawText(text, x, y, size = 18, color = FG) {
+  ctx.fillStyle = color;
+  ctx.font = `${size}px Arial, sans-serif`;
+  ctx.textBaseline = 'top';
+  ctx.fillText(text, x, y);
+}
+
+function drawLine(color, x0, y0, x1, y1, width = 1) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+}
+
+function drawCircle(color, x, y, r, fill = true, width = 1) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, 2 * Math.PI);
+  if (fill) {
+    ctx.fillStyle = color;
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+}
+
+function drawSpring(x0, y0, x1, y1, nCoils = 9, amp = 8, color = GRAY, width = 2) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const L = Math.hypot(dx, dy);
+  if (L < 1e-6) return;
+
+  const ux = dx / L;
+  const uy = dy / L;
+  const nx = -uy;
+  const ny = ux;
+
+  const pts = [];
+  const head = 14;
+  const tail = 14;
+  const body = Math.max(0, L - head - tail);
+
+  pts.push([x0, y0]);
+  pts.push([x0 + ux * head, y0 + uy * head]);
+
+  if (body > 1) {
+    const step = body / (nCoils * 2);
+    let cur = head;
+    let sgn = 1;
+    for (let i = 0; i < nCoils * 2; i++) {
+      cur += step;
+      const px = x0 + ux * cur + nx * (amp * sgn);
+      const py = y0 + uy * cur + ny * (amp * sgn);
+      pts.push([px, py]);
+      sgn *= -1;
+    }
+  }
+
+  pts.push([x1 - ux * tail, y1 - uy * tail]);
+  pts.push([x1, y1]);
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+}
+
+function drawSliderTriangle(apexX, y, epsWidthPx, height = 24, color = 'rgb(230,230,245)') {
+  const w = Math.max(8, Math.floor(epsWidthPx));
+  const h = Math.floor(height);
+  const pts = [
+    [apexX, y],
+    [apexX + w, y - h / 2],
+    [apexX + w, y + h / 2]
+  ];
+
+  ctx.fillStyle = color;
+  ctx.strokeStyle = 'rgb(60,60,80)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  ctx.lineTo(pts[1][0], pts[1][1]);
+  ctx.lineTo(pts[2][0], pts[2][1]);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+function drawWall(x, yTop, yBot) {
+  drawLine(ROD_COLOR, x, yTop, x, yBot, 3);
+  const n = 5;
+  for (let i = 0; i <= n; i++) {
+    const y = yTop + (i * (yBot - yTop)) / n;
+    drawLine(GRAY, x, y, x - 10, y + 10, 1.5);
+  }
+}
+
+function drawDashedLine(color, x0, y0, x1, y1, width = 2, dashLen = 6, gapLen = 4) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const L = Math.hypot(dx, dy);
+  if (L < 1e-6) return;
+
+  const ux = dx / L;
+  const uy = dy / L;
+  let cur = 0;
+  let on = true;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+
+  while (cur < L) {
+    let seg = on ? dashLen : gapLen;
+    seg = Math.min(seg, L - cur);
+    if (on) {
+      const sx = x0 + ux * cur;
+      const sy = y0 + uy * cur;
+      const ex = x0 + ux * (cur + seg);
+      const ey = y0 + uy * (cur + seg);
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+    }
+    cur += seg;
+    on = !on;
+  }
+  ctx.stroke();
+}
+
+// ------------------------------------------------------------
+// Model: E -- (g || C)  : linear kinematic hardening
+//   eps = sigma/E + p,   sigma - C p in [-g, g],
+//   p' in N_{[-g,g]}(sigma - C p)
+//   equivalently  B sigma' - eps(v) in -dI_K(sigma),
+//   K = [-g,g] + C(eps(u) - B sigma),  B = 1/E
+// ------------------------------------------------------------
+class KinematicHardening {
+  constructor(E = 20.0, C = 5.0, g = 15.0) {
+    this.E = Number(E);
+    this.C = Number(C);
+    this.g = Number(g);
+    this.resetState();
+  }
+
+  resetState() {
+    this.eps = 0.0;
+    this.p = 0.0;       // plastic strain  p = eps - B*sigma
+    this.sigma = 0.0;   // total stress
+    this.xi = 0.0;      // effective stress  sigma - C p
+  }
+
+  setParams({ E = null, C = null, g = null } = {}) {
+    if (E !== null) this.E = Math.max(1e-9, Number(E));
+    if (C !== null) this.C = Math.max(1e-9, Number(C));
+    if (g !== null) this.g = Math.max(1e-9, Number(g));
+  }
+
+  // return mapping (radial return) for strain-driven update
+  step(epsGiven) {
+    this.eps = Number(epsGiven);
+    const trial = this.E * (this.eps - this.p);
+    const xiTrial = trial - this.C * this.p;
+    if (Math.abs(xiTrial) <= this.g + 1e-12) {
+      this.sigma = trial;
+    } else {
+      const sign = xiTrial >= 0 ? 1.0 : -1.0;
+      let dgamma = (Math.abs(xiTrial) - this.g) / (this.E + this.C);
+      if (dgamma < 0) dgamma = 0;
+      this.p += sign * dgamma;
+      this.sigma = this.E * (this.eps - this.p);
+    }
+    this.xi = this.sigma - this.C * this.p;
+    return this.sigma;
+  }
+
+  // strain at which sigma = 0 is reached on quasi-static unloading;
+  // p is NOT modified here: the return mapping in step() handles the
+  // reverse plastic flow (back stress driven) along the way.
+  zeroStressTarget() {
+    if (Math.abs(this.C * this.p) <= this.g + 1e-12) {
+      return this.p;
+    }
+    const sign = this.p >= 0 ? 1.0 : -1.0;
+    return (sign * this.g) / this.C;
+  }
+}
+
+// ---------------------------
+// App state
+// ---------------------------
+const model = new KinematicHardening();
+const pxPerEps = PLOT.width / (E_RANGE[1] - E_RANGE[0]);
+
+let xr = null;
+let dragging = false;
+let relax = false;
+let relaxTau = 0.18;
+let relaxTargetX = null;
+let hist = [[0.0, 0.0]];
+let x0Axis = null;
+let y0Axis = null;
+let lastTime = performance.now();
+
+function epsFromX(x) {
+  return (x - x0Axis) / pxPerEps;
+}
+
+function xFromEps(eps) {
+  return x0Axis + eps * pxPerEps;
+}
+
+function pushHist(e, s) {
+  hist.push([e, s]);
+  if (hist.length > 40000) hist.shift();
+}
+
+function initStateConsistentWithGeometry() {
+  const epsAbs = epsFromX(xr);
+  model.resetState();
+  model.step(epsAbs);
+  hist = [];
+  pushHist(epsAbs, model.sigma);
+}
+
+function resetAll() {
+  model.resetState();
+  if (x0Axis !== null) {
+    xr = xFromEps(0.0);
+    initStateConsistentWithGeometry();
+  } else {
+    xr = null;
+    hist = [[0.0, 0.0]];
+  }
+  dragging = false;
+  relax = false;
+  relaxTargetX = null;
+}
+
+function clearHistory() {
+  if (xr === null || x0Axis === null) return;
+  const epsNow = epsFromX(xr);
+  hist = [];
+  pushHist(epsNow, model.sigma);
+}
+
+function toXY(e, s) {
+  const eMin = E_RANGE[0];
+  const eMax = E_RANGE[1];
+  const sMin = S_RANGE[0];
+  const sMax = S_RANGE[1];
+  const x = PLOT.left + (e - eMin) / (eMax - eMin) * PLOT.width;
+  const y = PLOT.bottom - (s - sMin) / (sMax - sMin) * PLOT.height;
+  return [Math.round(x), Math.round(y)];
+}
+
+function updateModel(dt) {
+  if (xr === null) return;
+
+  const eps = epsFromX(xr);
+  const sigma = model.step(eps);
+
+  if (relax && !dragging && relaxTargetX !== null) {
+    const alpha = 1.0 - Math.exp(-dt / Math.max(1e-6, relaxTau));
+    xr = xr + alpha * (relaxTargetX - xr);
+    if (Math.abs(xr - relaxTargetX) < 0.3) {
+      xr = relaxTargetX;
+      relax = false;
+      relaxTargetX = null;
+    }
+  }
+
+  if (
+    hist.length === 0 ||
+    Math.abs(eps - hist[hist.length - 1][0]) > 1e-9 ||
+    Math.abs(sigma - hist[hist.length - 1][1]) > 1e-9
+  ) {
+    pushHist(eps, sigma);
+  }
+}
+
+function drawPlotAndModel() {
+  const eMin = E_RANGE[0];
+  const sMin = S_RANGE[0];
+
+  ctx.fillStyle = 'rgb(255,255,255)';
+  ctx.fillRect(PLOT.left, PLOT.top, PLOT.width, PLOT.height);
+  ctx.strokeStyle = FRAME;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(PLOT.left, PLOT.top, PLOT.width, PLOT.height);
+
+  const x0 = toXY(0, sMin)[0];
+  const y0 = toXY(eMin, 0)[1];
+  drawLine(AXIS, x0, PLOT.top, x0, PLOT.bottom, 2);
+  drawLine(AXIS, PLOT.left, y0, PLOT.right, y0, 2);
+
+  x0Axis = x0;
+  y0Axis = y0;
+
+  if (xr === null) {
+    xr = xFromEps(0.0);
+    initStateConsistentWithGeometry();
+  }
+
+  // --- yield boundary: K = [-g, g] + C p  (translates with hardening) ---
+  const yPlus0 = toXY(eMin, model.g)[1];
+  const yMinus0 = toXY(eMin, -model.g)[1];
+  drawDashedLine(YIELD0_COLOR, PLOT.left, yPlus0, PLOT.right, yPlus0, 1.5, 6, 5);
+  drawDashedLine(YIELD0_COLOR, PLOT.left, yMinus0, PLOT.right, yMinus0, 1.5, 6, 5);
+
+  const alphaBack = model.C * model.p;
+  const yPlus = toXY(eMin, alphaBack + model.g)[1];
+  const yMinus = toXY(eMin, alphaBack - model.g)[1];
+  drawLine(YIELD_COLOR, PLOT.left, yPlus, PLOT.right, yPlus, 2);
+  drawLine(YIELD_COLOR, PLOT.left, yMinus, PLOT.right, yMinus, 2);
+
+  // --- history curve ---
+  if (hist.length >= 2) {
+    ctx.strokeStyle = ACCENT;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    const first = toXY(hist[0][0], hist[0][1]);
+    ctx.moveTo(first[0], first[1]);
+    for (let i = 1; i < hist.length; i++) {
+      const pt = toXY(hist[i][0], hist[i][1]);
+      ctx.lineTo(pt[0], pt[1]);
+    }
+    ctx.stroke();
+
+    const last = toXY(hist[hist.length - 1][0], hist[hist.length - 1][1]);
+    drawCircle(ACCENT, last[0], last[1], 6, true);
+  }
+
+  // --- σ=0 axis mechanical model:  wall -- E -- [ g || C ] -- handle ---
+  const yCenter = y0Axis;
+  const gapV = 26;
+  const yTop = yCenter - gapV;
+  const yBot = yCenter + gapV;
+
+  const xEps = clamp(xr, PLOT.left + 8, PLOT.right - 8);
+  const xWall = xFromEps(EPS_WALL);
+
+  // node between elastic spring and parallel unit:
+  // ideal position = wall + L0e + B*sigma  (B = 1/E)
+  const nodeEps = EPS_WALL + L0_ELASTIC + model.sigma / Math.max(1e-6, model.E);
+  const xNode = clamp(xFromEps(nodeEps), xWall + 26, xEps - 50);
+
+  // wall
+  drawWall(xWall, yCenter - 40, yCenter + 40);
+
+  // elastic spring (compliance B): elongation = B*sigma
+  drawSpring(xWall, yCenter, xNode, yCenter, 6, 8, GRAY, 2);
+
+  // vertical bars of the parallel unit
+  drawLine(ROD_COLOR, xNode, yTop, xNode, yBot, 3);
+  drawLine(ROD_COLOR, xEps, yTop, xEps, yBot, 3);
+
+  // top branch: friction element (yield value g), drawn as in the source:
+  // sliding triangle whose apex is displaced from the node by the slip p,
+  // with a dashed line marking the accumulated slip
+  const triWPx = TRI_EPS * pxPerEps;
+  let xTriApex = xNode + model.p * pxPerEps;
+  xTriApex = clamp(xTriApex, xWall + 4, xEps - triWPx - 8);
+  drawSliderTriangle(xTriApex, yTop, triWPx, 24, 'rgb(235,235,245)');
+
+  if (Math.abs(xTriApex - xNode) > 1e-9) {
+    const xL = Math.min(xNode, xTriApex);
+    const xR = Math.max(xNode, xTriApex);
+    drawDashedLine('rgb(110,120,155)', xL, yTop, xR, yTop, 2, 6, 4);
+  }
+
+  drawLine(ROD_COLOR, xTriApex + triWPx + 4, yTop, xEps, yTop, 3);
+
+  // bottom branch: hardening spring (stiffness C): elongation = p
+  drawSpring(xNode, yBot, xEps, yBot, 9, 8, GRAY, 2);
+
+  // handle
+  drawCircle(ACCENT, xEps, yCenter, 9, true);
+  drawCircle('rgb(40,50,70)', xEps, yCenter, 10, false, 2);
+}
+
+function drawInfo() {
+  if (x0Axis === null || xr === null) return;
+  const eps = epsFromX(xr);
+  drawText(
+    `E=1/B=${model.E.toPrecision(3)}  C=${model.C.toPrecision(3)}  g=${model.g.toPrecision(3)}`,
+    PLOT.left + 10, 10, 22, FG
+  );
+  drawText(`ε=${eps >= 0 ? '+' : ''}${eps.toFixed(3)}`, PLOT.left + 10, 40, 20, FG);
+  drawText(
+    `σ=${model.sigma >= 0 ? '+' : ''}${model.sigma.toFixed(3)} ` +
+    `(p=${model.p >= 0 ? '+' : ''}${model.p.toFixed(3)}, ` +
+    `α=Cp=${(model.C * model.p) >= 0 ? '+' : ''}${(model.C * model.p).toFixed(3)}, ` +
+    `σ−α=${model.xi >= 0 ? '+' : ''}${model.xi.toFixed(3)})`,
+    PLOT.left + 10,
+    70,
+    20,
+    FG
+  );
+  drawText('Q/A:E ±  W/S:g ±  E/D:C ±  R:reset  C:clear', x0Axis + 5, PLOT.bottom - 20, 12, FG);
+}
+
+function frame(now) {
+  const dtRaw = (now - lastTime) / 1000.0;
+  lastTime = now;
+  const dt = Math.min(0.05, Math.max(0, dtRaw));
+
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  updateModel(dt);
+  drawPlotAndModel();
+  drawInfo();
+
+  requestAnimationFrame(frame);
+}
+
+function canvasPosFromEvent(ev) {
+  const rect = canvas.getBoundingClientRect();
+  let clientX, clientY;
+  if (ev.touches && ev.touches.length > 0) {
+    clientX = ev.touches[0].clientX;
+    clientY = ev.touches[0].clientY;
+  } else if (ev.changedTouches && ev.changedTouches.length > 0) {
+    clientX = ev.changedTouches[0].clientX;
+    clientY = ev.changedTouches[0].clientY;
+  } else {
+    clientX = ev.clientX;
+    clientY = ev.clientY;
+  }
+  return {
+    x: (clientX - rect.left) * (WIDTH / rect.width),
+    y: (clientY - rect.top) * (HEIGHT / rect.height)
+  };
+}
+
+function pointerDown(ev) {
+  ev.preventDefault();
+  canvas.focus();
+  if (x0Axis === null || y0Axis === null) return;
+  const p = canvasPosFromEvent(ev);
+  if (p.x >= PLOT.left && p.x <= PLOT.right && p.y >= PLOT.top && p.y <= PLOT.bottom) {
+    const handleX = xr === null ? x0Axis : xr;
+    if (Math.abs(p.x - handleX) <= 16 && Math.abs(p.y - y0Axis) <= 18) {
+      dragging = true;
+      relax = false;
+      relaxTargetX = null;
+    }
+  }
+}
+
+function pointerMove(ev) {
+  if (!dragging) return;
+  ev.preventDefault();
+  const p = canvasPosFromEvent(ev);
+  xr = clamp(p.x, PLOT.left + 8, PLOT.right - 8);
+}
+
+function pointerUp(ev) {
+  if (!dragging) return;
+  ev.preventDefault();
+  dragging = false;
+  const epsStar = model.zeroStressTarget();
+  relaxTargetX = clamp(xFromEps(epsStar), PLOT.left + 8, PLOT.right - 8);
+  relax = true;
+}
+
+canvas.addEventListener('mousedown', pointerDown);
+window.addEventListener('mousemove', pointerMove);
+window.addEventListener('mouseup', pointerUp);
+canvas.addEventListener('touchstart', pointerDown, { passive: false });
+window.addEventListener('touchmove', pointerMove, { passive: false });
+window.addEventListener('touchend', pointerUp, { passive: false });
+window.addEventListener('touchcancel', pointerUp, { passive: false });
+
+window.addEventListener('keydown', (ev) => {
+  const key = ev.key.toLowerCase();
+  if (key === 'r') {
+    resetAll();
+  } else if (key === 'c') {
+    clearHistory();
+  } else if (key === 'q') {
+    model.setParams({ E: model.E * 1.1 });
+  } else if (key === 'a') {
+    model.setParams({ E: model.E / 1.1 });
+  } else if (key === 'w') {
+    model.setParams({ g: model.g * 1.1 });
+  } else if (key === 's') {
+    model.setParams({ g: model.g / 1.1 });
+  } else if (key === 'e') {
+    model.setParams({ C: model.C * 1.1 });
+  } else if (key === 'd') {
+    model.setParams({ C: model.C / 1.1 });
+  } else {
+    return;
+  }
+  ev.preventDefault();
+});
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
